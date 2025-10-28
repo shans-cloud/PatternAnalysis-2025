@@ -95,14 +95,6 @@ def load_data_2D(
         return images
 
 
-def denormalise_image(tensor: torch.Tensor) -> torch.Tensor:
-    """Denormalise a tensor image with ImageNet mean and std."""
-    mean = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-    std = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
-    denorm_tensor = tensor * std + mean
-    return torch.clamp(denorm_tensor, 0, 1)
-
-
 def show_examples(
     dataset,
     title,
@@ -121,11 +113,12 @@ def show_examples(
         image, seg = dataset[idx]
 
         # Denormalize image for visualisation
-        img_show = denormalise_image(image)
+        img_show = (image - image.min()) / (image.max() - image.min() + 1e-8)
 
         # Convert tensors to numpy arrays and plot image
-        img_np = img_show.permute(1, 2, 0).numpy()  # H x W x C for image
-        axes[0, i].imshow(img_np)
+        img_np = img_show.permute(1, 2, 0).squeeze().numpy()  # H x W x C for image
+
+        axes[0, i].imshow(img_np, cmap="gray")
         axes[0, i].set_title(f"Image {idx}", fontweight="bold")
         axes[0, i].axis("off")
 
@@ -136,7 +129,9 @@ def show_examples(
         bg_pixels = np.sum(seg_np == 0)
 
         # Plot segmentation mask
-        im = axes[1, i].imshow(seg_np, cmap="RdBu", vmin=0, vmax=1)
+        colours = ["blue", "red"]
+        cmap = ListedColormap(colours)
+        im = axes[1, i].imshow(seg_np, cmap=cmap, vmin=0, vmax=1)
         axes[1, i].set_title(
             f"Mask {idx} (Seg: {seg_pixels}, BG: {bg_pixels})",
             fontweight="bold",
@@ -145,9 +140,6 @@ def show_examples(
 
         # Add colorbar for segmentation mask
         if i == 0:
-            colours = ["blue", "red"]
-            cmap = ListedColormap(colours)
-            im = axes[1, i].imshow(seg_np, cmap=cmap, vmin=0, vmax=1)
             plt.colorbar(
                 im,
                 ax=axes[1, i],
@@ -160,4 +152,100 @@ def show_examples(
     plt.savefig(save_path)
     plt.close()
     print(f"Saved sample visualization to: {save_path}")
+    return
+
+
+def show_epoch_predictions(model, dataset, epoch, n=3, device="cuda", indices=None):
+    """Show model predictions of validation set after specified epoch."""
+    model.eval()
+    fig, axes = plt.subplots(3, n, figsize=(12, 6))
+    fig.suptitle(
+        f"Model Predictions after Epoch {epoch}", fontsize=16, fontweight="bold"
+    )
+
+    if indices is None:
+        indices = random.sample(range(len(dataset)), n)
+
+    with torch.no_grad():
+        for i, idx in enumerate(indices):
+            image, true_mask = dataset[idx]
+
+            # Output of model is sigmoid activated
+            pred = model(image.unsqueeze(0).to(device))  # Model expects batch dimension
+            pred_mask = (
+                pred[0, 0].cpu().numpy()
+            )  # 1st batch, 1st channel -> probability map
+            pred_mask_bin = (pred_mask > 0.5).astype(np.uint8)
+
+            # Denormalize image for visualisation
+            img_show = (image - image.min()) / (image.max() - image.min() + 1e-8)
+
+            # Transpose from CHW to HWC for plotting
+            img_np = img_show.permute(1, 2, 0).squeeze().cpu().numpy()  # H x W x C
+
+            # Show the original image
+            axes[0, i].imshow(img_np, cmap="gray")
+            axes[0, i].set_title(f"Image {idx}", fontweight="bold")
+            axes[0, i].axis("off")
+
+            # Show the ground truth mask
+            axes[1, i].imshow(true_mask.squeeze(0).cpu(), cmap="gray", vmin=0, vmax=1)
+            axes[1, i].set_title(f"Ground Truth Mask {idx}", fontweight="bold")
+            axes[1, i].axis("off")
+
+            # Show the predicted mask
+            axes[2, i].imshow(pred_mask_bin, cmap="gray", vmin=0, vmax=1)
+            # Pixel accuracy
+            accuracy = np.mean(pred_mask_bin == true_mask.squeeze(0).cpu().numpy())
+            # Dice coefficient
+            true_np = true_mask.squeeze(0).cpu().numpy()
+            intersection = np.sum(pred_mask_bin * true_np)
+            dice_coeff = (2.0 * intersection + 1e-6) / (
+                np.sum(pred_mask_bin) + np.sum(true_np) + 1e-6
+            )
+
+            axes[2, i].set_title(
+                f"Predicted Mask {idx}\n"
+                f"Acc: {accuracy:.2f}\n"
+                f"Dice: {dice_coeff:.2f}",
+                fontweight="bold",
+            )
+            axes[2, i].axis("off")
+    plt.tight_layout()
+    plt.savefig(f"epoch_{epoch}_predictions.png")
+    plt.close()
+    # print(f"Saved epoch {epoch} predictions to: epoch_{epoch}_predictions.png")
+
+    model.train()  # Switch back to train mode
+    return
+
+
+def plot_loss(losses, loss_type="dice"):
+    plt.figure(figsize=(8, 4))
+    plt.plot(losses, "bo-", linewidth=2, markersize=8)
+
+    title_map = {
+        "bce": "Training Loss (BCE)",
+        "dice": "Training Loss (Dice)",
+        "combined": "Training Loss (Combined BCE + Dice)",
+    }
+
+    plt.title(title_map.get(loss_type, "Training Loss"), fontsize=14, fontweight="bold")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.grid(True, alpha=0.3)
+    plt.savefig(f"loss_plot_{loss_type}.png")
+    plt.close()
+    return
+
+
+def save_model_checkpoint(state, checkpoint_path="checkpoint.pth.tar"):
+    print(f"=> Saving model checkpoint.")
+    torch.save(state, checkpoint_path)
+    return
+
+
+def load_model_checkpoint(checkpoint_path="checkpoint.pth.tar", model=None):
+    print(f"=> Loading model checkpoint")
+    model.load_state_dict(checkpoint_path["state_dict"])
     return

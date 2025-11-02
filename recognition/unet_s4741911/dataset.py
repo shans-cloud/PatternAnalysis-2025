@@ -1,13 +1,23 @@
+"""
+dataset.py
+
+Defines dataset class for loading and preprocessing 2D Hip MRI prostate Nifti slices.
+It supports optional transformations, normalization, categorical conversion, and resizing.
+"""
+
 import torch
 from torch.utils.data import Dataset
 from utils import load_data_2D
 import os
-import numpy as np
-import torchvision.transforms as transforms
+from torchvision.tv_tensors import Image, Mask
 
 
 class HipMRIProstateDataset(Dataset):
-    """Dataset for Hip MRI Prostate 2D Nifti slices."""
+    """
+    Dataset for Hip MRI Prostate 2D Nifti slices.
+
+    Handles loading, normalisation, categorical conversion, and resizing.
+    """
 
     def __init__(
         self,
@@ -60,8 +70,9 @@ class HipMRIProstateDataset(Dataset):
         self.seg = load_data_2D(
             self.seg_files,
             normImage=False,
-            categorical=False,
+            categorical=self.categorical,
         )
+
         print(
             f"Finished loading {len(self.images)} images and {len(self.seg)} segmentations."
         )
@@ -73,21 +84,12 @@ class HipMRIProstateDataset(Dataset):
         image = self.images[idx]
         seg = self.seg[idx]
 
-        # Expand dims to add channel dimension if missing (for grayscale images)
-        if image.ndim == 2:
-            image = image[np.newaxis, :, :]
-        if seg.ndim == 2:
-            seg = seg[np.newaxis, :, :]
-
         if self.transform:
-            image = self.transform(image)
+            image = Image(torch.tensor(image, dtype=torch.float32))
+            seg = Mask(torch.tensor(seg, dtype=torch.int64))
+            image, seg = self.transform(image, seg)
 
-        image = image.permute(1, 2, 0)  # Change from (W, C, H) -> (C, H, W)
-
-        binary_seg = np.zeros_like(seg, dtype=np.uint8)
-        binary_seg[seg == 5] = 1  # Prostate class
-        binary_seg[seg != 5] = 0  # Non-prostate classes
-
-        seg = torch.tensor(binary_seg, dtype=torch.uint8)
+        if self.categorical and seg.ndim == 3:
+            seg = seg.permute(2, 0, 1)  # Change seg shape to (C, H, W)
 
         return image, seg

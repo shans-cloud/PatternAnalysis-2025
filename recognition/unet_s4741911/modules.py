@@ -1,3 +1,10 @@
+"""
+modules.py
+
+Contains core model architecture for UNET-based segmentation of 2D Hip MRI prostate images.
+Uses Double Convolution blocks, Encoder-Decoder structure with skip connections.
+"""
+
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
@@ -36,7 +43,9 @@ class DoubleConv(nn.Module):
 
 
 class UNET(nn.Module):
-    def __init__(self, in_channels=1, out_channels=1, features=[64, 128, 256, 512]):
+    def __init__(
+        self, in_channels=1, out_channels=6, features=[32, 64, 128, 256]
+    ):  # Reduced features compared to original UNET
         super(UNET, self).__init__()
         self.ups = nn.ModuleList()
         self.downs = nn.ModuleList()
@@ -80,8 +89,5 @@ class UNET(nn.Module):
             concat_skip = torch.cat((skip_connection, x), dim=1)
             x = self.ups[idx + 1](concat_skip)
 
-        # Apply sigmoid activation so output is probability map between 0 and 1
         x = self.final_conv(x)
-        x = torch.sigmoid(x)
-
-        return x
+        return x  # Raw logits output
